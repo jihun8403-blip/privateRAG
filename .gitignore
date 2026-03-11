@@ -1,0 +1,100 @@
+# ======================
+# Python
+# ======================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+pip-wheel-metadata/
+
+# 가상환경
+.venv/
+venv/
+env/
+ENV/
+
+# ======================
+# 환경변수 및 시크릿
+# ======================
+.env
+.env.local
+.env.*.local
+secrets/
+*.pem
+*.key
+
+# ======================
+# 데이터 및 DB
+# ======================
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ======================
+# 로그
+# ======================
+*.log
+logs/
+
+# ======================
+# 테스트 / 커버리지
+# ======================
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# ======================
+# 타입 체커 / 린터
+# ======================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+
+# ======================
+# IDE
+# ======================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ======================
+# Alembic
+# ======================
+app/db/migrations/versions/*.py
+!app/db/migrations/versions/.gitkeep
+
+# ======================
+# sentence-transformers 모델 캐시
+# ======================
+.cache/
+models/
+
+# ======================
+# Qdrant 로컬 스토리지
+# ======================
+qdrant_storage/
+
+# ======================
+# Playwright
+# ======================
+playwright-report/
+test-results/

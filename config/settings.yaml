@@ -1,0 +1,48 @@
+# PrivateRAG 설정 파일
+# 환경변수(.env)가 이 파일의 값을 덮어씁니다.
+
+database:
+  url: "sqlite+aiosqlite:///./data/privaterag.db"
+
+storage:
+  raw_base: "data/raw"
+  normalized_base: "data/normalized"
+  archive_base: "data/archive"
+
+qdrant:
+  host: "localhost"
+  port: 6333
+  collection: "privaterag"
+
+ollama:
+  base_url: "http://127.0.0.1:11434"
+  timeout: 120
+
+embedding:
+  model: "paraphrase-multilingual-mpnet-base-v2"
+  dimension: 768
+  batch_size: 32
+
+relevance:
+  default_threshold: 0.6
+  min_text_length: 200
+
+chunking:
+  chunk_size: 400
+  chunk_overlap: 50
+
+archive:
+  warm_after_days: 90
+  cold_after_days: 365
+
+search:
+  default_count: 10
+  max_concurrent_fetches: 5
+  domain_delay_seconds: 1.0
+
+scheduler:
+  timezone: "Asia/Seoul"
+
+app:
+  debug: false
+  log_level: "INFO"
