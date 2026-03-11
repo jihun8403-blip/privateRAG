@@ -95,7 +95,7 @@
 
 ```bash
 git clone <repo-url>
-cd site27_PrivateRAG
+cd PrivateRAG
 
 python -m venv .venv
 # Windows
