@@ -6,8 +6,11 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from app.api.deps import DbDep
-from app.api.schemas.document import DocumentRead, DocumentVersionRead
+from app.api.schemas.document import DocSummaryResponse, DocumentRead, DocumentVersionRead
+from app.core.app_state import get_providers
 from app.models.document import Document, DocumentVersion
+from app.services.model_router import ModelRouter
+from app.services.summary_service import SummaryService
 
 router = APIRouter()
 
@@ -71,3 +74,21 @@ async def get_version(doc_id: str, version_no: int, db: DbDep):
     if version is None:
         raise HTTPException(status_code=404, detail="해당 버전을 찾을 수 없습니다.")
     return version
+
+
+@router.post("/{doc_id}/summary", response_model=DocSummaryResponse)
+async def generate_summary(doc_id: str, db: DbDep):
+    """문서 AI 요약 생성 (URL 재수집 → LLM 요약 → 관련 문서 검색)."""
+    doc = await db.get(Document, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+
+    providers = get_providers()
+    router_svc = ModelRouter(db, providers)
+    svc = SummaryService(db, router_svc)
+    try:
+        result = await svc.generate(doc)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"요약 생성 실패: {e}")
+
+    return result

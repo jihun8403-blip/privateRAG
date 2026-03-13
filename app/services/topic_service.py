@@ -2,12 +2,18 @@
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.logging import get_logger
 from app.models.topic import Topic, TopicRule
 from app.api.schemas.topic import TopicCreate, TopicUpdate, TopicRuleCreate
 
 logger = get_logger(__name__)
+
+
+def _topic_with_rules():
+    """rules를 즉시 로드하는 selectinload 옵션 반환."""
+    return selectinload(Topic.rules)
 
 
 class TopicService:
@@ -43,11 +49,15 @@ class TopicService:
             )
             self._db.add(rule)
 
+        await self._db.flush()  # rules flush
+        await self._db.refresh(topic)  # rules selectin 로드 (비동기 컨텍스트 내)
         logger.info("주제 생성", topic_id=topic.topic_id, name=topic.name)
         return topic
 
     async def get_topic(self, topic_id: str) -> Topic | None:
-        return await self._db.get(Topic, topic_id)
+        stmt = select(Topic).where(Topic.topic_id == topic_id).options(_topic_with_rules())
+        result = await self._db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def list_topics(self, enabled_only: bool = False) -> list[Topic]:
         """주제 목록을 priority 오름차순으로 반환합니다 (TC-T03, FR-T04)."""
@@ -59,7 +69,7 @@ class TopicService:
 
     async def update_topic(self, topic_id: str, data: TopicUpdate) -> Topic | None:
         """주제를 수정합니다 (TC-T02)."""
-        topic = await self._db.get(Topic, topic_id)
+        topic = await self.get_topic(topic_id)  # selectinload로 rules 포함 조회
         if topic is None:
             return None
 

@@ -72,6 +72,7 @@ project/
 │   │   ├── search_service.py
 │   │   ├── fetch_service.py
 │   │   ├── relevance_service.py
+│   │   ├── summary_service.py   ← 문서 AI 요약 (2026-03-13 추가)
 │   │   ├── archive_service.py
 │   │   ├── rag_service.py
 │   │   ├── model_router.py
@@ -82,7 +83,8 @@ project/
 │   │   │   ├── ollama_adapter.py
 │   │   │   ├── openai_adapter.py
 │   │   │   ├── anthropic_adapter.py
-│   │   │   └── gemini_adapter.py
+│   │   │   ├── gemini_adapter.py
+│   │   │   └── google_adapter.py   ← Gemini (OpenAI 호환, 2026-03-11 추가)
 │   │   ├── search/
 │   │   │   ├── base.py
 │   │   │   └── brave_adapter.py
@@ -333,6 +335,7 @@ class ModelRouter:
 | query_gen | API 소형 | 로컬 소형 |
 | relevance_check | 로컬 소형 | API 소형 |
 | summarize | 로컬 중형 | API 소형 |
+| summary_gen | capability=answer 모델 | — |
 | answer | 사용자 선택 | 로컬 중형 |
 | rerank | 로컬 소형 | — |
 
@@ -352,7 +355,36 @@ def classify_url(url: str, rules: RuleSet) -> Literal["blocked", "preferred", "n
     return "neutral"
 ```
 
-### 4.4 Relevance Validator
+### 4.4 Summary Service (2026-03-13 추가)
+
+```python
+class SummaryService:
+    async def generate(self, doc: Document) -> dict:
+        """
+        1. FetchService로 URL 재수집
+        2. ExtractionPipeline으로 본문 추출 (최대 8000자)
+        3. ModelRouter.select_model(task_type="summary_gen", capability=["answer"])
+        4. LLM으로 7개 섹션 Markdown 생성:
+           핵심 요약 / 배경 / 대상 독자 / 의미·영향 / 섹션별 요약 / 실무 적용 방안 / 키워드
+        5. Qdrant 벡터 검색으로 관련 문서 TOP5 (현재 문서 제외, doc_id별 dedupe)
+        6. 관련 문서 Markdown 테이블을 요약에 append
+        7. doc.summary 갱신 후 DB commit
+        반환: {"summary": str, "related_docs": list[RelatedDocItem]}
+        """
+```
+
+**응답 스키마**
+
+```json
+{
+  "summary": "## 핵심 요약\n...",
+  "related_docs": [
+    { "doc_id": "...", "url": "...", "title": "...", "relevance_score": 0.87 }
+  ]
+}
+```
+
+### 4.5 Relevance Validator
 
 ```
 1차 규칙 검사
@@ -367,7 +399,7 @@ def classify_url(url: str, rules: RuleSet) -> Literal["blocked", "preferred", "n
     → 미달 → 폐기 기록 후 skip
 ```
 
-### 4.5 수집 파이프라인
+### 4.6 수집 파이프라인
 
 ```
 [1]  topic load
@@ -482,6 +514,7 @@ class ExtractResult(BaseModel):
 | GET | /documents/{id} | 문서 상세 |
 | GET | /documents/{id}/versions | 버전 이력 |
 | GET | /documents/{id}/versions/{no} | 특정 버전 |
+| POST | /documents/{id}/summary | AI 요약 생성 (2026-03-13 추가) |
 
 ### 6.4 RAG
 

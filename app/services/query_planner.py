@@ -13,7 +13,8 @@ from app.services.model_router import ModelRouter
 
 logger = get_logger(__name__)
 
-SYSTEM_PROMPT = """당신은 웹 검색 전문가입니다.
+SYSTEM_PROMPT = """
+당신은 웹 검색 전문가입니다.
 주어진 토픽 프로파일을 분석하여 효과적인 검색 쿼리를 생성하세요.
 반드시 유효한 JSON만 응답하세요."""
 
@@ -53,10 +54,17 @@ class QueryPlanner:
             estimated_tokens=800,
         )
 
+        logger.info(
+            "쿼리 생성 provider 선택",
+            provider=f"{model.provider}:{model.model_name}",
+            topic=topic.name,
+        )
+
         prompt = self._build_prompt(topic, count_per_lang)
 
         # 비JSON 응답 시 1회 재시도 (TC-Q04, NFR-05)
-        result = await self._call_with_retry(provider, prompt)
+        result, input_tokens, output_tokens = await self._call_with_retry(provider, prompt, model_key=f"{model.provider}:{model.model_name}")
+        await self._router.record_usage(model, "query_gen", input_tokens, output_tokens)
 
         queries_data = result.queries
         now = datetime.now(timezone.utc)
@@ -113,21 +121,60 @@ class QueryPlanner:
         provider: BaseLLMProvider,
         prompt: str,
         max_retries: int = 2,
-    ) -> QueryPlanResult:
+        model_key: str = "",
+    ) -> tuple[QueryPlanResult, int, int]:
         last_error: Exception = ValueError("LLM 호출 미시도")
+        response = None
         for attempt in range(max_retries):
+            # 첫 시도: json 모드, 재시도: text 모드 (빈 응답 대응)
+            fmt = "json" if attempt == 0 else "text"
+            params = dict(
+                response_format=fmt,
+                max_tokens=65536,
+                temperature=0.3,
+            )
+            logger.info(
+                "LLM 호출",
+                model=model_key,
+                attempt=attempt + 1,
+                prompt_preview=prompt[:300],
+                **params,
+            )
             try:
                 response = await provider.complete(
                     prompt=prompt,
                     system=SYSTEM_PROMPT,
-                    response_format="json",
-                    max_tokens=1024,
-                    temperature=0.3,
+                    **params,
                 )
-                data = json.loads(response.content)
-                return QueryPlanResult.model_validate(data)
+                logger.info(
+                    "LLM 응답 수신",
+                    model=model_key,
+                    attempt=attempt + 1,
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens,
+                    duration_ms=response.duration_ms,
+                    raw=response.content[:300],
+                )
+                content = response.content.strip()
+                if not content:
+                    raise json.JSONDecodeError("빈 응답", "", 0)
+                # text 모드일 경우 ```json ... ``` 코드블록 추출
+                if fmt == "text" and "```" in content:
+                    import re
+                    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+                    if m:
+                        content = m.group(1)
+                data = json.loads(content)
+                return QueryPlanResult.model_validate(data), response.input_tokens, response.output_tokens
             except (json.JSONDecodeError, ValidationError) as e:
                 last_error = e
-                logger.warning("쿼리 생성 파싱 실패, 재시도", attempt=attempt + 1, error=str(e))
+                raw = (response.content[:300] if response else "응답 없음")
+                logger.warning(
+                    "쿼리 생성 파싱 실패, 재시도",
+                    model=model_key,
+                    attempt=attempt + 1,
+                    error=str(e),
+                    raw=raw,
+                )
 
         raise ValueError(f"쿼리 생성 실패 (최대 재시도 초과): {last_error}") from last_error

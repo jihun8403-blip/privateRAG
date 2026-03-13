@@ -38,6 +38,18 @@ class DocumentRead(BaseModel):
     updated_at: datetime
 
 
+class RelatedDocItem(BaseModel):
+    doc_id: str
+    url: str
+    title: Optional[str] = None
+    relevance_score: float
+
+
+class DocSummaryResponse(BaseModel):
+    summary: str
+    related_docs: list[RelatedDocItem]
+
+
 class DocumentListParams(BaseModel):
     topic_id: Optional[str] = None
     archive_tier: Optional[str] = None

@@ -32,6 +32,9 @@ class PlaywrightExtractor(BaseExtractor):
                     rendered_html = await page.content()
                 finally:
                     await browser.close()
+        except NotImplementedError as e:
+            # Windows SelectorEventLoop에서 subprocess 미지원 — 이 환경에서 playwright 사용 불가
+            raise ExtractionError(f"playwright: 이 환경에서 지원되지 않음 (Windows SelectorEventLoop)") from e
         except Exception as e:
             raise ExtractionError(f"playwright: 페이지 렌더링 실패 ({url}): {e}") from e
 

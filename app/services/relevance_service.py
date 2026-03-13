@@ -65,11 +65,16 @@ class RelevanceService:
         Returns:
             RelevanceResult (is_relevant, score, reason)
         """
-        provider, model = await self._router.select_model(
-            task_type="relevance_check",
-            required_capabilities=["relevance_check"],
-            estimated_tokens=600,
-        )
+        from app.services.model_router import NoAvailableModelError
+        try:
+            provider, model = await self._router.select_model(
+                task_type="relevance_check",
+                required_capabilities=["relevance_check"],
+                estimated_tokens=600,
+            )
+        except NoAvailableModelError:
+            logger.warning("relevance_check 모델 없음 — rule_filter 통과로 간주")
+            return RelevanceResult(is_relevant=True, score=1.0, reason="LLM 모델 없음 (rule_filter 통과)")
 
         prompt = f"""다음 문서가 아래 토픽과 관련이 있는지 판단하세요.
 
@@ -98,6 +103,7 @@ class RelevanceService:
                 result = RelevanceResult.model_validate(data)
                 # threshold 적용
                 result.is_relevant = result.score >= topic.relevance_threshold
+                await self._router.record_usage(model, "relevance_check", response.input_tokens, response.output_tokens)
                 logger.debug(
                     "LLM 관련성 검증",
                     score=result.score,

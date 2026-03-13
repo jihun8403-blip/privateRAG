@@ -27,36 +27,30 @@ class ExtractionPipeline:
     async def extract(self, html: str, url: str) -> ExtractResult:
         """HTML에서 본문을 추출합니다. 모든 추출기 실패 시 ExtractionError 발생."""
         last_error: Exception = ExtractionError("추출기 없음")
+        errors: list[str] = []
 
         for extractor in self._extractors:
+            name = extractor.__class__.__name__
             try:
                 result = await extractor.extract(html, url)
                 if result.text and len(result.text) >= self._min_length:
                     logger.debug(
                         "본문 추출 성공",
-                        extractor=extractor.__class__.__name__,
+                        extractor=name,
                         url=url[:80],
                         length=len(result.text),
                     )
                     return result
-                logger.debug(
-                    "본문 너무 짧음, 다음 추출기 시도",
-                    extractor=extractor.__class__.__name__,
-                    length=len(result.text) if result.text else 0,
-                )
+                reason = f"본문 너무 짧음 ({len(result.text) if result.text else 0}자)"
+                errors.append(f"{name}: {reason}")
+                logger.debug("본문 너무 짧음, 다음 추출기 시도", extractor=name, length=len(result.text) if result.text else 0)
             except ExtractionError as e:
                 last_error = e
-                logger.debug(
-                    "추출기 실패, 다음 시도",
-                    extractor=extractor.__class__.__name__,
-                    error=str(e),
-                )
+                errors.append(f"{name}: {e}")
+                logger.debug("추출기 실패, 다음 시도", extractor=name, error=str(e))
             except Exception as e:
                 last_error = e
-                logger.warning(
-                    "추출기 예외",
-                    extractor=extractor.__class__.__name__,
-                    error=str(e),
-                )
+                errors.append(f"{name}: {e}")
+                logger.warning("추출기 예외", extractor=name, error=str(e))
 
-        raise ExtractionError(f"모든 추출기 실패 ({url}): {last_error}") from last_error
+        raise ExtractionError(f"모든 추출기 실패 ({url}): {' | '.join(errors)}") from last_error

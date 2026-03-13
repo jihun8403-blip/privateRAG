@@ -6,6 +6,9 @@ import sys
 if sys.platform == "win32":
     import asyncio
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    # 터미널 한글 깨짐 방지 (CP949 → UTF-8)
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from contextlib import asynccontextmanager
 
@@ -28,16 +31,39 @@ async def lifespan(app: FastAPI):
     # 1. DB 초기화 (테이블 생성 또는 마이그레이션)
     from app.db.session import engine
     from app.db.base import Base
+    from sqlalchemy import text
     import app.models  # noqa: F401 — 모든 모델 로드
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # api_key 컬럼 마이그레이션 (기존 DB 호환)
+        try:
+            await conn.execute(text("ALTER TABLE model_registry ADD COLUMN api_key VARCHAR(500)"))
+        except Exception:
+            pass  # 이미 존재하는 경우 무시
+        try:
+            await conn.execute(text("ALTER TABLE model_registry ADD COLUMN call_interval_seconds REAL DEFAULT 0.0"))
+        except Exception:
+            pass  # 이미 존재하는 경우 무시
+    # capability_tags 마이그레이션: relevance_check 없는 활성 모델에 추가
+    from app.db.session import AsyncSessionLocal as _ASL
+    from app.models.model_registry import ModelRegistry as _MR2
+    from sqlalchemy import select as _sel2
+    async with _ASL() as _ms:
+        _mr = await _ms.execute(_sel2(_MR2).where(_MR2.enabled == True))
+        for _m2 in _mr.scalars():
+            tags = _m2.capability_tags or []
+            if "relevance_check" not in tags and tags:
+                _m2.capability_tags = tags + ["relevance_check"]
+                _ms.add(_m2)
+                logger.info("relevance_check capability 추가", model=_m2.model_name)
+        await _ms.commit()
     logger.info("DB 초기화 완료")
 
     # 2. Qdrant 컬렉션 초기화
     try:
         from qdrant_client import QdrantClient
-        from qdrant_client.models import Distance, VectorParams, PayloadSchemaType
-        qdrant = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+        from qdrant_client.models import Distance, VectorParams
+        qdrant = QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port, prefer_grpc=False)
         collections = [c.name for c in qdrant.get_collections().collections]
         if settings.qdrant_collection not in collections:
             qdrant.create_collection(
@@ -51,7 +77,7 @@ async def lifespan(app: FastAPI):
             qdrant.create_payload_index(
                 collection_name=settings.qdrant_collection,
                 field_name="doc_id",
-                field_schema=PayloadSchemaType.KEYWORD,
+                field_schema="keyword",
             )
             logger.info("Qdrant 컬렉션 생성 완료", collection=settings.qdrant_collection)
         else:
@@ -60,25 +86,49 @@ async def lifespan(app: FastAPI):
         logger.warning("Qdrant 초기화 실패 (계속 진행)", error=str(e))
 
     # 3. Provider 등록
-    from app.core.app_state import register_provider, set_search_provider
+    from app.core.app_state import register_provider, set_search_provider, get_providers
     from app.providers.llm.ollama_adapter import OllamaAdapter
 
-    ollama_default_model = "qwen2.5:7b"
-    ollama_provider = OllamaAdapter(
-        base_url=settings.ollama_base_url,
-        model_name=ollama_default_model,
-    )
-    register_provider(f"ollama:{ollama_default_model}", ollama_provider)
-
+    # env 기반 기본 provider 등록
     if settings.openai_api_key:
         from app.providers.llm.openai_adapter import OpenAIAdapter
-        openai_provider = OpenAIAdapter(api_key=settings.openai_api_key)
-        register_provider("openai:gpt-4o-mini", openai_provider)
+        register_provider("openai:gpt-4o-mini", OpenAIAdapter(api_key=settings.openai_api_key))
 
     if settings.anthropic_api_key:
         from app.providers.llm.anthropic_adapter import AnthropicAdapter
-        anthropic_provider = AnthropicAdapter(api_key=settings.anthropic_api_key)
-        register_provider("anthropic:claude-haiku-4-5-20251001", anthropic_provider)
+        register_provider("anthropic:claude-haiku-4-5-20251001", AnthropicAdapter(api_key=settings.anthropic_api_key))
+
+    # DB에 등록된 활성 모델을 전부 provider로 등록 (model_name 자유)
+    from app.db.session import AsyncSessionLocal
+    from app.models.model_registry import ModelRegistry as _ModelRegistry
+    from sqlalchemy import select as _sa_select
+    async with AsyncSessionLocal() as _session:
+        _result = await _session.execute(
+            _sa_select(_ModelRegistry).where(_ModelRegistry.enabled == True)
+        )
+        for _m in _result.scalars():
+            _key = f"{_m.provider}:{_m.model_name}"
+            if _key in get_providers():
+                continue
+            try:
+                if _m.provider == "ollama":
+                    register_provider(_key, OllamaAdapter(
+                        base_url=settings.ollama_base_url,
+                        model_name=_m.model_name,
+                    ))
+                elif _m.provider == "openai" and _m.api_key:
+                    from app.providers.llm.openai_adapter import OpenAIAdapter
+                    register_provider(_key, OpenAIAdapter(api_key=_m.api_key, model_name=_m.model_name))
+                elif _m.provider == "anthropic" and _m.api_key:
+                    from app.providers.llm.anthropic_adapter import AnthropicAdapter
+                    register_provider(_key, AnthropicAdapter(api_key=_m.api_key, model_name=_m.model_name))
+                elif _m.provider in ("google", "gemini"):
+                    _api_key = _m.api_key or settings.gemini_api_key
+                    if _api_key:
+                        from app.providers.llm.google_adapter import GoogleAdapter
+                        register_provider(_key, GoogleAdapter(api_key=_api_key, model_name=_m.model_name))
+            except Exception as e:
+                logger.warning("Provider 등록 실패 (스킵)", key=_key, error=str(e))
 
     if settings.brave_api_key:
         from app.providers.search.brave_adapter import BraveSearchAdapter
@@ -87,7 +137,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("BRAVE_API_KEY 미설정 — 검색 기능 비활성화")
 
-    logger.info("Provider 등록 완료")
+    logger.info("Provider 등록 완료", registered=list(get_providers().keys()))
 
     # 4. 스케줄러 시작
     from app.scheduler.scheduler import start_scheduler

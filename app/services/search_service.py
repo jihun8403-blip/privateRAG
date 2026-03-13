@@ -1,5 +1,6 @@
 """Search Service — 검색 API 실행 및 URL 수집."""
 
+import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +43,9 @@ class SearchService:
 
         all_results: list[SearchResult] = []
 
-        for query in queries:
+        for idx, query in enumerate(queries):
+            if idx > 0:
+                await asyncio.sleep(1.5)  # Brave API rate limit 방지
             try:
                 results = await self._provider.search(
                     query=query.query_text,

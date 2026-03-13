@@ -17,6 +17,34 @@ from app.services.usage_service import UsageService
 router = APIRouter()
 
 
+def _try_register_provider(model: ModelRegistry) -> None:
+    """모델을 app_state에 즉시 등록합니다. Ollama는 api_key 불필요, 클라우드는 api_key 필요."""
+    from app.core.app_state import register_provider
+    key = f"{model.provider}:{model.model_name}"
+    try:
+        if model.provider == "ollama":
+            from app.providers.llm.ollama_adapter import OllamaAdapter
+            from app.core.config import settings
+            register_provider(key, OllamaAdapter(
+                base_url=settings.ollama_base_url,
+                model_name=model.model_name,
+            ))
+        elif model.provider == "openai" and model.api_key:
+            from app.providers.llm.openai_adapter import OpenAIAdapter
+            register_provider(key, OpenAIAdapter(api_key=model.api_key, model_name=model.model_name))
+        elif model.provider == "anthropic" and model.api_key:
+            from app.providers.llm.anthropic_adapter import AnthropicAdapter
+            register_provider(key, AnthropicAdapter(api_key=model.api_key, model_name=model.model_name))
+        elif model.provider in ("google", "gemini"):
+            from app.core.config import settings as _s
+            api_key = model.api_key or _s.gemini_api_key
+            if api_key:
+                from app.providers.llm.google_adapter import GoogleAdapter
+                register_provider(key, GoogleAdapter(api_key=api_key, model_name=model.model_name))
+    except Exception:
+        pass  # 어댑터 패키지 미설치 시 무시
+
+
 @router.get("", response_model=list[ModelRegistryRead])
 async def list_models(db: DbDep):
     """모델 목록 조회."""
@@ -39,8 +67,11 @@ async def create_model(data: ModelRegistryCreate, db: DbDep):
         priority=data.priority,
         fallback_order=data.fallback_order,
         enabled=data.enabled,
+        api_key=data.api_key,
     )
     db.add(model)
+    await db.flush()
+    _try_register_provider(model)
     return model
 
 
@@ -54,6 +85,7 @@ async def update_model(model_id: str, data: ModelRegistryUpdate, db: DbDep):
     for field, value in data.model_dump(exclude_none=True).items():
         setattr(model, field, value)
     db.add(model)
+    _try_register_provider(model)
     return model
 
 

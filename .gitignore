@@ -98,3 +98,6 @@ qdrant_storage/
 # ======================
 playwright-report/
 test-results/
+
+node_modules/
+.next/

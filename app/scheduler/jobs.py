@@ -38,7 +38,7 @@ async def _run_topic_pipeline(topic_id: str) -> None:
 
 
 def run_topic_pipeline_sync(topic_id: str) -> None:
-    """APScheduler가 호출하는 동기 래퍼."""
+    """APScheduler가 호출하는 동기 래퍼 (BlockingScheduler 전용, 현재 미사용)."""
     asyncio.run(_run_topic_pipeline(topic_id))
 
 
@@ -90,7 +90,7 @@ async def register_topic_jobs() -> None:
         if len(parts) == 5:
             minute, hour, day, month, day_of_week = parts
             scheduler.add_job(
-                run_topic_pipeline_sync,
+                _run_topic_pipeline,
                 trigger="cron",
                 id=job_id,
                 args=[topic.topic_id],
@@ -108,7 +108,7 @@ def register_system_jobs() -> None:
     """시스템 고정 잡을 등록합니다."""
     # 일일 토큰 리셋 (자정 Asia/Seoul)
     scheduler.add_job(
-        reset_daily_token_usage_sync,
+        _reset_daily_token_usage,
         trigger="cron",
         id="reset_daily_tokens",
         hour=0,
@@ -118,7 +118,7 @@ def register_system_jobs() -> None:
 
     # 아카이브 tier 전환 (새벽 3시)
     scheduler.add_job(
-        run_archive_rotation_sync,
+        _run_archive_rotation,
         trigger="cron",
         id="archive_rotation",
         hour=3,

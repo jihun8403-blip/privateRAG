@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ModelRegistryBase(BaseModel):
-    provider: str = Field(..., pattern="^(openai|ollama|anthropic|gemini)$")
+    provider: str = Field(..., pattern="^(openai|ollama|anthropic|gemini|google)$")
     model_name: str = Field(..., min_length=1, max_length=100)
     capability_tags: list[str] = Field(default_factory=list)
     max_context: Optional[int] = None
@@ -17,10 +17,11 @@ class ModelRegistryBase(BaseModel):
     priority: int = Field(default=10, ge=1)
     fallback_order: int = Field(default=99, ge=1)
     enabled: bool = True
+    call_interval_seconds: float = Field(default=0.0, ge=0.0)
 
 
 class ModelRegistryCreate(ModelRegistryBase):
-    pass
+    api_key: Optional[str] = None
 
 
 class ModelRegistryUpdate(BaseModel):
@@ -34,6 +35,8 @@ class ModelRegistryUpdate(BaseModel):
     priority: Optional[int] = None
     fallback_order: Optional[int] = None
     enabled: Optional[bool] = None
+    api_key: Optional[str] = None
+    call_interval_seconds: Optional[float] = None
 
 
 class ModelRegistryRead(ModelRegistryBase):

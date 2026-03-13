@@ -66,6 +66,7 @@ class RagService:
             self._qdrant = QdrantClient(
                 host=settings.qdrant_host,
                 port=settings.qdrant_port,
+                prefer_grpc=False,  # REST 강제 — gRPC protobuf EnumTypeWrapper 버그 회피
             )
         return self._qdrant
 
@@ -125,7 +126,7 @@ class RagService:
 
             points.append(PointStruct(
                 id=point_id,
-                vector=vector,
+                vector=vector,  # _sync_embed이 이미 .tolist() 반환
                 payload={
                     "chunk_id": chunk.chunk_id,
                     "doc_id": chunk.doc_id,

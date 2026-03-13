@@ -1,6 +1,8 @@
 """Model Router — capability/priority/budget 기반 LLM 모델 선택기."""
 
-from datetime import date, timezone
+import asyncio
+import time
+from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +25,9 @@ class ModelRouter:
     capability_tags, 일일 토큰 예산, 우선순위 순으로 최적 모델을 선택합니다.
     예산 초과 또는 health_check 실패 시 다음 후보로 fallback합니다.
     """
+
+    # 모델 마지막 호출 시각 (model_id → monotonic timestamp). 앱 전역 공유.
+    _last_called: dict[str, float] = {}
 
     def __init__(
         self,
@@ -86,6 +91,18 @@ class ModelRouter:
                 logger.warning("Provider health_check 실패", key=provider_key)
                 continue
 
+            # 호출 간격 적용
+            interval = getattr(model, "call_interval_seconds", 0.0) or 0.0
+            if interval > 0:
+                last = ModelRouter._last_called.get(model.model_id, 0.0)
+                elapsed = time.monotonic() - last
+                wait = interval - elapsed
+                if wait > 0:
+                    logger.info("호출 간격 대기", model=model.model_name, interval_sec=interval, wait_sec=round(wait, 2))
+                    await asyncio.sleep(wait)
+                else:
+                    logger.info("호출 간격 통과", model=model.model_name, interval_sec=interval, elapsed_sec=round(elapsed, 2))
+
             logger.debug("모델 선택", model=model.model_name, task=task_type)
             return provider, model
 
@@ -114,3 +131,4 @@ class ModelRouter:
             model.last_reset_date = today
 
         self._db.add(model)
+        ModelRouter._last_called[model.model_id] = time.monotonic()
